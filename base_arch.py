@@ -5,7 +5,105 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from op import FusedLeakyReLU, fused_leaky_relu, upfirdn2d, conv2d_gradfix
+from op import fused_leaky_relu, upfirdn2d
+
+class Encoder(nn.Module):
+
+    def __init__(self):
+        super().__init__()
+
+        self.conv0 = EqualConv2d(
+            in_channel=3,
+            out_channel=64,
+            kernel_size=1
+            )
+
+        self.conv1 = EncoderLayer(
+            in_channel=64,
+            out_channel=128,
+            kernel_size=3,
+            downsample=True
+        )
+
+        self.conv2 = EncoderLayer(
+            in_channel=128,
+            out_channel=256,
+            kernel_size=3,
+            downsample=True
+        )
+
+        self.conv3 = EncoderLayer(
+            in_channel=256,
+            out_channel=512,
+            kernel_size=3,
+            downsample=True
+        )
+
+        self.conv4 = EncoderLayer(
+            in_channel=512,
+            out_channel=512,
+            kernel_size=3,
+            downsample=True
+        )
+
+    def forward(self, x):
+
+        y = self.conv0(x)
+        y = self.conv1(y)
+        y = self.conv2(y)
+        y = self.conv3(y)
+        y = self.conv4(y)
+
+        return y
+
+class Decoder(nn.Module):
+
+    def __init__(self):
+        super().__init__()
+
+        self.conv0 = EqualConv2d(
+            in_channel=64,
+            out_channel=3,
+            kernel_size=1
+            )
+
+        self.conv1 = DecoderLayer(
+            in_channel=128,
+            out_channel=64,
+            kernel_size=3,
+            upsample=True
+        )
+
+        self.conv2 = DecoderLayer(
+            in_channel=256,
+            out_channel=128,
+            kernel_size=3,
+            upsample=True
+        )
+
+        self.conv3 = DecoderLayer(
+            in_channel=512,
+            out_channel=256,
+            kernel_size=3,
+            upsample=True
+        )
+
+        self.conv4 = DecoderLayer(
+            in_channel=512,
+            out_channel=512,
+            kernel_size=3,
+            upsample=True
+        )
+
+    def forward(self, x):
+
+        y = self.conv4(x)
+        y = self.conv3(y)
+        y = self.conv2(y)
+        y = self.conv1(y)
+        y = self.conv0(y)
+        
+        return y
 
 class EncoderLayer(nn.Sequential):
     def __init__(
@@ -45,7 +143,7 @@ class EncoderLayer(nn.Sequential):
                 bias=bias and not activate,
             )
 
-        self.activate = FusedLeakyReLU(out_channel, bias=bias) if activate else None
+        self.activate = nn.LeakyReLU(negative_slope=0.2) if activate else None
 
     def forward(self, input):
         out = self.blur(input) if self.blur is not None else input
@@ -92,7 +190,7 @@ class DecoderLayer(nn.Module):
             )
             self.blur = None
 
-        self.activate = FusedLeakyReLU(out_channel, bias=bias) if activate else None
+        self.activate = nn.LeakyReLU(negative_slope=0.2) if activate else None
 
     def forward(self, input):
         out = self.conv(input)
@@ -124,7 +222,7 @@ class EqualConv2d(nn.Module):
             self.bias = None
 
     def forward(self, input):
-        out = conv2d_gradfix.conv2d(
+        out = F.conv2d(
             input,
             self.weight * self.scale,
             bias=self.bias,
@@ -163,7 +261,7 @@ class EqualTransposeConv2d(nn.Module):
 
     def forward(self, input):
         weight = self.weight.transpose(0,1)
-        out = conv2d_gradfix.conv_transpose2d(
+        out = F.conv_transpose2d(
             input,
             weight * self.scale,
             bias=self.bias,
@@ -316,7 +414,7 @@ class ConvLayer(nn.Sequential):
         )
 
         if activate:
-            layers.append(FusedLeakyReLU(out_channel, bias=bias))
+            layers.append(nn.LeakyReLU(negative_slope=0.2))
 
         super().__init__(*layers)
 
@@ -349,3 +447,16 @@ def make_kernel(k):
     k /= k.sum()
 
     return k
+
+
+if __name__ == "__main__":
+
+    device = "cuda"
+    model = Encoder().to(device)
+    demodel = Decoder().to(device)
+    x = torch.randn(1,3,512,512).to(device)
+
+    feat = model(x)
+    img = demodel(feat)
+    print(feat.shape)
+    print(img.shape)
