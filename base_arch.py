@@ -449,14 +449,86 @@ def make_kernel(k):
     return k
 
 
+class ResBlock(nn.Module):
+    def __init__(self, in_channel, out_channel):
+        super().__init__()
+
+        self.conv1 = ConvLayer(in_channel, in_channel, 3)
+        self.conv2 = ConvLayer(in_channel, out_channel,3)
+
+        self.skip_conv = ConvLayer(in_channel, out_channel, 1, activate=False)
+
+    def forward(self, input):
+
+        out = self.conv1(input)
+        out = self.conv2(out)
+
+        skip = self.skip_conv(input)
+
+        out = out*0.2 + skip
+
+        return out
+
+class ResBlockDecoder(nn.Module):
+
+    def __init__(self):
+        super().__init__()
+
+        self.resbk1 = nn.Sequential(
+            ResBlock(in_channel=512, out_channel=512),
+            ResBlock(in_channel=512, out_channel=512),
+            )
+        self.up1 = ConvLayer(512, 256, 3)
+
+        self.resbk2 = nn.Sequential(
+            ResBlock(in_channel=256, out_channel=256),
+            ResBlock(in_channel=256, out_channel=256),
+            )
+        self.up2 = ConvLayer(256, 128, 3)
+
+        self.resbk3 = nn.Sequential(
+            ResBlock(in_channel=128, out_channel=128),
+            ResBlock(in_channel=128, out_channel=128),
+            )
+        self.up3 = ConvLayer(128, 64, 3)
+
+        self.resbk4 = nn.Sequential(
+            ResBlock(in_channel=64, out_channel=64),
+            ResBlock(in_channel=64, out_channel=64),
+            )
+        self.up4 = ConvLayer(64, 32, 3)
+
+        self.hr_conv = ConvLayer(32, 32, 3)
+
+        self.final_conv = EqualConv2d(
+            in_channel=32,
+            out_channel=3,
+            kernel_size=1
+            )
+
+    def forward(self, input):
+
+        y = self.up1(F.interpolate(self.resbk1(input), scale_factor=2, mode='nearest'))
+        y = self.up2(F.interpolate(self.resbk2(y), scale_factor=2, mode='nearest'))
+        y = self.up3(F.interpolate(self.resbk3(y), scale_factor=2, mode='nearest'))
+        y = self.up4(F.interpolate(self.resbk4(y), scale_factor=2, mode='nearest'))
+
+        y = self.final_conv(self.hr_conv(y))
+
+        return y
+
 if __name__ == "__main__":
 
     device = "cuda"
     model = Encoder().to(device)
     demodel = Decoder().to(device)
+    resdemodel = ResBlockDecoder().to(device)
     x = torch.randn(1,3,512,512).to(device)
 
     feat = model(x)
-    img = demodel(feat)
+    img1 = demodel(feat)
+    img2 = resdemodel(feat)
+
     print(feat.shape)
-    print(img.shape)
+    print(img1.shape)
+    print(img2.shape)
